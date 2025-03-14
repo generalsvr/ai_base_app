@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # API Gateway service
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - USER_SERVICE_URL=http://user-service:8081
+      - AI_SERVICE_URL=http://ai-service:8082
+    depends_on:
+      - user-service
+      - ai-service
+    networks:
+      - onlytwins-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # User Service
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    container_name: user-service
+    environment:
+      - DB_HOST=user-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=user_db
+    depends_on:
+      user-db:
+        condition: service_healthy
+    networks:
+      - onlytwins-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # AI Service
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: ai-service
+    ports:
+      - "8082:8082"
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+    depends_on:
+      qdrant:
+        condition: service_started
+    networks:
+      - onlytwins-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # User Database
+  user-db:
+    image: postgres:17
+    container_name: user-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=user_db
+    volumes:
+      - user-db-data:/var/lib/postgresql/data
+    networks:
+      - onlytwins-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - onlytwins-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:6333/healthz"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  onlytwins-network:
+    driver: bridge
+
+volumes:
+  user-db-data:
+  qdrant-data:
