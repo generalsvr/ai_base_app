@@ -1,5 +1,5 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Any, Dict
+from pydantic import BaseModel, Field, HttpUrl
+from typing import List, Optional, Any, Dict, Union
 from datetime import datetime
 
 # Completion models
@@ -72,4 +72,27 @@ class SimilarityResult(BaseModel):
 
 
 class SimilarityResponse(BaseModel):
-    results: List[SimilarityResult] 
+    results: List[SimilarityResult]
+
+
+# Image processing models
+class ImageUrlRequest(BaseModel):
+    prompt: str
+    image_url: HttpUrl
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+class ImageFileRequest(BaseModel):
+    prompt: str
+    image_base64: str = Field(..., description="Base64 encoded image data")
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+class ImageResponse(BaseModel):
+    text: str
+    model: str
+    finish_reason: Optional[str] = None 

@@ -1,11 +1,15 @@
 import logging
-from typing import List
-from fastapi import APIRouter, HTTPException, status
+import json
+from typing import List, Optional
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+import base64
 
 from app.schemas.ai import (
     CompletionRequest, CompletionResponse,
     EmbeddingRequest, EmbeddingResponse, EmbeddingData, EmbeddingDB,
-    SimilarityRequest, SimilarityResponse, SimilarityResult
+    SimilarityRequest, SimilarityResponse, SimilarityResult,
+    ImageUrlRequest, ImageFileRequest, ImageResponse
 )
 from app.services.openai_service import OpenAIService
 from app.services.qdrant_service import QdrantService
@@ -21,7 +25,7 @@ async def create_completion(request: CompletionRequest):
     """Create a text completion"""
     try:
         openai_service = OpenAIService(api_key=request.api_key, base_url=request.base_url)
-        completion = openai_service.create_completion(
+        completion = await openai_service.create_completion(
             prompt=request.prompt,
             model=request.model,
             max_tokens=request.max_tokens,
@@ -35,13 +39,43 @@ async def create_completion(request: CompletionRequest):
         raise HTTPException(status_code=500, detail=f"Error creating completion: {str(e)}")
 
 
+@router.post("/completions/stream")
+async def create_completion_stream(request: CompletionRequest):
+    """Create a streaming text completion"""
+    try:
+        openai_service = OpenAIService(api_key=request.api_key, base_url=request.base_url)
+        
+        async def stream_generator():
+            async for chunk in openai_service.create_completion_stream(
+                prompt=request.prompt,
+                model=request.model,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+                top_p=request.top_p,
+                stop=request.stop
+            ):
+                # Format each chunk as a Server-Sent Event with proper JSON serialization
+                yield f"data: {json.dumps(chunk)}\n\n"
+            
+            # Send a final message to indicate the stream is done
+            yield "data: [DONE]\n\n"
+        
+        return StreamingResponse(
+            stream_generator(),
+            media_type="text/event-stream"
+        )
+    except Exception as e:
+        logger.error(f"Error creating streaming completion: {e}")
+        raise HTTPException(status_code=500, detail=f"Error creating streaming completion: {str(e)}")
+
+
 @router.post("/embeddings", response_model=EmbeddingDB, status_code=status.HTTP_201_CREATED)
 async def create_embedding(request: EmbeddingRequest):
     """Create and store an embedding"""
     try:
         # Create the embedding using OpenAI
         openai_service = OpenAIService(api_key=request.api_key, base_url=request.base_url)
-        embedding_vector = openai_service.create_embedding(
+        embedding_vector = await openai_service.create_embedding(
             input_text=request.input,
             model=request.model
         )
@@ -82,7 +116,7 @@ async def find_similar(request: SimilarityRequest):
     try:
         # Create the embedding using OpenAI
         openai_service = OpenAIService(api_key=request.api_key, base_url=request.base_url)
-        embedding_vector = openai_service.create_embedding(
+        embedding_vector = await openai_service.create_embedding(
             input_text=request.query,
             model=request.model
         )
@@ -107,4 +141,61 @@ async def find_similar(request: SimilarityRequest):
         return SimilarityResponse(results=results)
     except Exception as e:
         logger.error(f"Error finding similar texts: {e}")
-        raise HTTPException(status_code=500, detail=f"Error finding similar texts: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Error finding similar texts: {str(e)}")
+
+
+@router.post("/images/url", response_model=ImageResponse)
+async def process_image_from_url(request: ImageUrlRequest):
+    """Process an image from a URL with a text prompt"""
+    try:
+        openai_service = OpenAIService(api_key=request.api_key, base_url=request.base_url)
+        result = await openai_service.process_image_from_url(
+            prompt=request.prompt,
+            image_url=str(request.image_url),
+            model=request.model
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error processing image from URL: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
+
+@router.post("/images/base64", response_model=ImageResponse)
+async def process_image_from_base64(request: ImageFileRequest):
+    """Process an image from base64 encoded data with a text prompt"""
+    try:
+        openai_service = OpenAIService(api_key=request.api_key, base_url=request.base_url)
+        result = await openai_service.process_image_from_bytes(
+            prompt=request.prompt,
+            image_bytes=request.image_base64,
+            model=request.model
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error processing image from base64: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+
+
+@router.post("/images/upload", response_model=ImageResponse)
+async def process_image_from_file(
+    prompt: str = Form(...),
+    file: UploadFile = File(...),
+    model: Optional[str] = Form(None),
+    api_key: Optional[str] = Form(None),
+    base_url: Optional[str] = Form(None)
+):
+    """Process an uploaded image file with a text prompt"""
+    try:
+        # Read the file
+        image_bytes = await file.read()
+        
+        openai_service = OpenAIService(api_key=api_key, base_url=base_url)
+        result = await openai_service.process_image_from_bytes(
+            prompt=prompt,
+            image_bytes=image_bytes,
+            model=model
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error processing uploaded image: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}") 

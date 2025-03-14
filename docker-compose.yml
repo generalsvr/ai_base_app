@@ -12,9 +12,11 @@ services:
     environment:
       - USER_SERVICE_URL=http://user-service:8081
       - AI_SERVICE_URL=http://ai-service:8082
+      - ANALYTICS_SERVICE_URL=http://analytics-service:8083
     depends_on:
       - user-service
       - ai-service
+      - analytics-service
     networks:
       - onlytwins-network
     restart: unless-stopped
@@ -72,6 +74,34 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Analytics Service
+  analytics-service:
+    build:
+      context: ./analytics-service
+      dockerfile: Dockerfile
+    container_name: analytics-service
+    ports:
+      - "8083:8083"
+    environment:
+      - DB_HOST=analytics-db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=analytics_db
+      - LOG_LEVEL=info
+      - ENABLE_DETAILED_LOGS=true
+    depends_on:
+      analytics-db:
+        condition: service_healthy
+    networks:
+      - onlytwins-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # User Database
   user-db:
     image: postgres:17
@@ -82,6 +112,25 @@ services:
       - POSTGRES_DB=user_db
     volumes:
       - user-db-data:/var/lib/postgresql/data
+    networks:
+      - onlytwins-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Analytics Database
+  analytics-db:
+    image: postgres:17
+    container_name: analytics-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=analytics_db
+    volumes:
+      - analytics-db-data:/var/lib/postgresql/data
     networks:
       - onlytwins-network
     healthcheck:
@@ -116,4 +165,5 @@ networks:
 
 volumes:
   user-db-data:
+  analytics-db-data:
   qdrant-data:

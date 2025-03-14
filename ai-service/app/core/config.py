@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     # Application settings
     DEFAULT_EMBEDDING_MODEL: str = "text-embedding-ada-002"
     DEFAULT_COMPLETION_MODEL: str = "gpt-3.5-turbo-instruct"
+    DEFAULT_VISION_MODEL: str = "gpt-4o-mini"
     
     # API settings
     API_PREFIX: str = "/api/v1"

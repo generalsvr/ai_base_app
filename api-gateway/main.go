@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -66,30 +65,11 @@ func main() {
 	router.HandleFunc("/api/v1/logout", createProxyHandler(config.UserServiceURL, logger)).Methods("POST")
 	router.HandleFunc("/api/v1/verify-token", createProxyHandler(config.UserServiceURL, logger)).Methods("POST", "GET")
 
-	// AI service routes
-	router.PathPrefix("/api/v1/ai/completions").HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			// Rewrite the URL before forwarding to AI service
-			r.URL.Path = strings.Replace(r.URL.Path, "/api/v1/ai/completions", "/api/v1/completions", 1)
-			createProxyHandler(config.AIServiceURL, logger)(w, r)
-		},
-	).Methods("POST")
-
-	router.PathPrefix("/api/v1/ai/embeddings").HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			// Rewrite the URL before forwarding to AI service
-			r.URL.Path = strings.Replace(r.URL.Path, "/api/v1/ai/embeddings", "/api/v1/embeddings", 1)
-			createProxyHandler(config.AIServiceURL, logger)(w, r)
-		},
-	)
-
-	router.PathPrefix("/api/v1/ai/similarity").HandlerFunc(
-		func(w http.ResponseWriter, r *http.Request) {
-			// Rewrite the URL before forwarding to AI service
-			r.URL.Path = strings.Replace(r.URL.Path, "/api/v1/ai/similarity", "/api/v1/similarity", 1)
-			createProxyHandler(config.AIServiceURL, logger)(w, r)
-		},
-	).Methods("POST")
+	// AI service routes - simplify by forwarding all AI endpoints directly
+	router.PathPrefix("/api/v1/completions").Handler(createProxyHandler(config.AIServiceURL, logger))
+	router.PathPrefix("/api/v1/embeddings").Handler(createProxyHandler(config.AIServiceURL, logger))
+	router.PathPrefix("/api/v1/similarity").Handler(createProxyHandler(config.AIServiceURL, logger))
+	router.PathPrefix("/api/v1/images").Handler(createProxyHandler(config.AIServiceURL, logger))
 
 	// Start HTTP server
 	srv := &http.Server{

@@ -4,14 +4,16 @@ import json
 import time
 import sys
 import os
+import base64
 from colorama import init, Fore, Style
 
 # Initialize colorama for colored output
 init()
 
 class ServiceTester:
-    def __init__(self, api_gateway_url="http://localhost:8080"):
+    def __init__(self, api_gateway_url="http://localhost:8080", analytics_url="http://localhost:8083"):
         self.api_gateway_url = api_gateway_url
+        self.analytics_url = analytics_url
         self.token = None
         self.user_id = None
         self.test_results = {
@@ -21,6 +23,8 @@ class ServiceTester:
         }
         self.created_username = f"testuser_{int(time.time())}"
         self.created_password = "Password123!"
+        # Sample image URL for image processing tests
+        self.sample_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
 
     def print_header(self, message):
         """Print a formatted header"""
@@ -62,9 +66,22 @@ class ServiceTester:
         self.test_ai_embedding()
         self.test_ai_embedding_custom_model()
         
+        # Test Image Processing
+        print(f"\n{Fore.CYAN}Testing Image Processing{Style.RESET_ALL}")
+        self.test_image_from_url()
+        
         # Cleanup - logout first, then delete user
         self.test_logout()
         self.test_delete_user()
+        
+        # Test Analytics Service
+        self.print_header("TESTING ANALYTICS SERVICE")
+        self.test_analytics_health()
+        self.test_log_user_activity()
+        self.test_log_ai_call()
+        self.test_get_user_stats()
+        self.test_get_ai_stats()
+        self.test_get_total_users()
         
         # Print summary
         self.print_summary()
@@ -248,7 +265,7 @@ class ServiceTester:
             }
             
             response = requests.post(
-                f"{self.api_gateway_url}/api/v1/ai/completions",
+                f"{self.api_gateway_url}/api/v1/completions",
                 headers=headers,
                 json=payload
             )
@@ -256,7 +273,7 @@ class ServiceTester:
             success = response.status_code == 200
             if success:
                 data = response.json()
-                print(f"  AI Response: {data.get('choices', [{}])[0].get('text', '')[:30]}...")
+                print(f"  AI Response: {data.get('choices', [{}])[0].get('text', '')[:50]}...")
                 print(f"  Model used: {data.get('model', 'unknown')}")
             else:
                 print(f"  Response status: {response.status_code}")
@@ -273,23 +290,19 @@ class ServiceTester:
             return
             
         try:
+            model = "gpt-3.5-turbo-instruct"
+            print(f"  Testing custom model: {model}")
+            
             headers = {"Authorization": f"Bearer {self.token}"}
-            
-            # Get default API key from environment
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-            
             payload = {
-                "prompt": "Write a haiku about programming:",
+                "prompt": "Write a short poem about coding.",
+                "model": model,
                 "max_tokens": 100,
-                "model": "gpt-3.5-turbo-instruct",  # Explicitly specify model
-                "api_key": api_key,  # Use the same API key for testing
-                "base_url": "https://api.openai.com/v1"  # Use standard base URL for testing
+                "temperature": 0.8
             }
             
-            print(f"  Testing custom model: {payload['model']}")
-            
             response = requests.post(
-                f"{self.api_gateway_url}/api/v1/ai/completions",
+                f"{self.api_gateway_url}/api/v1/completions",
                 headers=headers,
                 json=payload
             )
@@ -297,13 +310,8 @@ class ServiceTester:
             success = response.status_code == 200
             if success:
                 data = response.json()
-                print(f"  AI Response: {data.get('choices', [{}])[0].get('text', '')[:30]}...")
+                print(f"  AI Response: {data.get('choices', [{}])[0].get('text', '')[:50]}...")
                 print(f"  Model used: {data.get('model', 'unknown')}")
-                
-                # Verify the model used matches what we requested
-                model_success = "gpt-3.5-turbo-instruct" in data.get('model', '')
-                if not model_success:
-                    print(f"  {Fore.YELLOW}Warning: Model used doesn't match requested model{Style.RESET_ALL}")
             else:
                 print(f"  Response status: {response.status_code}")
                 print(f"  Response: {response.text}")
@@ -313,7 +321,7 @@ class ServiceTester:
             self.print_test_result("AI Completion Custom Model", False, str(e))
 
     def test_ai_embedding(self):
-        """Test AI embedding creation with default settings"""
+        """Test AI embedding endpoint with default settings"""
         if not self.token:
             self.print_test_result("AI Embedding", False, "Missing token")
             return
@@ -321,11 +329,11 @@ class ServiceTester:
         try:
             headers = {"Authorization": f"Bearer {self.token}"}
             payload = {
-                "input": "This is a test embedding for semantic search."
+                "input": "This is a test sentence for embedding."
             }
             
             response = requests.post(
-                f"{self.api_gateway_url}/api/v1/ai/embeddings",
+                f"{self.api_gateway_url}/api/v1/embeddings",
                 headers=headers,
                 json=payload
             )
@@ -333,8 +341,10 @@ class ServiceTester:
             success = response.status_code == 201
             if success:
                 data = response.json()
-                print(f"  Embedding created with ID: {data.get('id')}")
-                print(f"  Embedding vector length: {len(data.get('embedding', []))}")
+                embedding_id = data.get("id")
+                embedding_vec = data.get("embedding", [])
+                print(f"  Embedding created with ID: {embedding_id}")
+                print(f"  Embedding vector length: {len(embedding_vec)}")
             else:
                 print(f"  Response status: {response.status_code}")
                 print(f"  Response: {response.text}")
@@ -344,28 +354,23 @@ class ServiceTester:
             self.print_test_result("AI Embedding", False, str(e))
 
     def test_ai_embedding_custom_model(self):
-        """Test AI embedding creation with custom model"""
+        """Test AI embedding endpoint with custom model"""
         if not self.token:
             self.print_test_result("AI Embedding Custom Model", False, "Missing token")
             return
             
         try:
+            model = "text-embedding-ada-002"
+            print(f"  Testing custom embedding model: {model}")
+            
             headers = {"Authorization": f"Bearer {self.token}"}
-            
-            # Get default API key from environment
-            api_key = os.environ.get("OPENAI_API_KEY", "")
-            
             payload = {
-                "input": "This is a test embedding using a custom model configuration.",
-                "model": "text-embedding-ada-002",  # Explicitly specify model
-                "api_key": api_key,  # Use the same API key for testing
-                "base_url": "https://api.openai.com/v1"  # Use standard base URL for testing
+                "input": "This is a test sentence for custom embedding model.",
+                "model": model
             }
             
-            print(f"  Testing custom embedding model: {payload['model']}")
-            
             response = requests.post(
-                f"{self.api_gateway_url}/api/v1/ai/embeddings",
+                f"{self.api_gateway_url}/api/v1/embeddings",
                 headers=headers,
                 json=payload
             )
@@ -373,8 +378,10 @@ class ServiceTester:
             success = response.status_code == 201
             if success:
                 data = response.json()
-                print(f"  Embedding created with ID: {data.get('id')}")
-                print(f"  Embedding vector length: {len(data.get('embedding', []))}")
+                embedding_id = data.get("id")
+                embedding_vec = data.get("embedding", [])
+                print(f"  Embedding created with ID: {embedding_id}")
+                print(f"  Embedding vector length: {len(embedding_vec)}")
             else:
                 print(f"  Response status: {response.status_code}")
                 print(f"  Response: {response.text}")
@@ -427,6 +434,127 @@ class ServiceTester:
         except Exception as e:
             self.print_test_result("User Logout", False, str(e))
 
+    def test_image_from_url(self):
+        """Test image processing from URL"""
+        try:
+            headers = {}
+            if self.token:
+                headers["Authorization"] = f"Bearer {self.token}"
+                
+            payload = {
+                "prompt": "What is in this image? Describe it in detail.",
+                "image_url": self.sample_image_url,
+                "model": "gpt-4o-mini"  # Use a model that supports vision
+            }
+            
+            print(f"  Sending request to: {self.api_gateway_url}/api/v1/images/url")
+            print(f"  Request payload: {json.dumps(payload)}")
+            
+            response = requests.post(
+                f"{self.api_gateway_url}/api/v1/images/url",
+                headers=headers,
+                json=payload
+            )
+            
+            success = response.status_code == 200
+            print(f"  Response status: {response.status_code}")
+            
+            if success:
+                data = response.json()
+                print(f"  AI Response: {data.get('text', '')[:100]}...")  # Print first 100 chars
+                print(f"  Model used: {data.get('model', 'unknown')}")
+            else:
+                print(f"  Response: {response.text}")
+            
+            self.print_test_result("Image Processing from URL", success)
+        except Exception as e:
+            self.print_test_result("Image Processing from URL", False, str(e))
+
+    # Analytics Service Tests
+    def test_analytics_health(self):
+        """Test the analytics service health endpoint"""
+        try:
+            response = requests.get(f"{self.analytics_url}/api/v1/health")
+            success = response.status_code == 200 and response.json().get("status") == "ok"
+            print(f"  Response status: {response.status_code}")
+            print(f"  Response: {response.text}")
+            self.print_test_result("Analytics Service Health Check", success, None if success else f"Unexpected response: {response.text}")
+        except Exception as e:
+            self.print_test_result("Analytics Service Health Check", False, str(e))
+
+    def test_log_user_activity(self):
+        """Test logging user activity"""
+        try:
+            payload = {
+                "user_id": "test-user-123",
+                "action": "login",
+                "ip_address": "127.0.0.1",
+                "user_agent": "Test Browser/1.0"
+            }
+            print(f"  Sending payload: {json.dumps(payload)}")
+            response = requests.post(f"{self.analytics_url}/api/v1/user-activity", json=payload)
+            success = response.status_code == 200
+            print(f"  Response status: {response.status_code}")
+            print(f"  Response: {response.text}")
+            self.print_test_result("Log User Activity", success, None if success else f"Unexpected response: {response.text}")
+        except Exception as e:
+            self.print_test_result("Log User Activity", False, str(e))
+
+    def test_log_ai_call(self):
+        """Test logging AI call"""
+        try:
+            payload = {
+                "user_id": "test-user-123",
+                "model_used": "gpt-4",
+                "call_type": "completion",
+                "response_time": 0.75,
+                "tokens": 320,
+                "success": True
+            }
+            print(f"  Sending payload: {json.dumps(payload)}")
+            response = requests.post(f"{self.analytics_url}/api/v1/ai-call", json=payload)
+            success = response.status_code == 200
+            print(f"  Response status: {response.status_code}")
+            print(f"  Response: {response.text}")
+            self.print_test_result("Log AI Call", success, None if success else f"Unexpected response: {response.text}")
+        except Exception as e:
+            self.print_test_result("Log AI Call", False, str(e))
+
+    def test_get_user_stats(self):
+        """Test getting user statistics"""
+        try:
+            # Get stats for the last 7 days
+            response = requests.get(f"{self.analytics_url}/api/v1/user-stats")
+            success = response.status_code == 200
+            print(f"  Response status: {response.status_code}")
+            print(f"  Response: {response.text[:100]}...")  # Print first 100 chars
+            self.print_test_result("Get User Stats", success, None if success else f"Unexpected response: {response.text}")
+        except Exception as e:
+            self.print_test_result("Get User Stats", False, str(e))
+
+    def test_get_ai_stats(self):
+        """Test getting AI statistics"""
+        try:
+            # Get stats for the last 7 days
+            response = requests.get(f"{self.analytics_url}/api/v1/ai-stats")
+            success = response.status_code == 200
+            print(f"  Response status: {response.status_code}")
+            print(f"  Response: {response.text[:100]}...")  # Print first 100 chars
+            self.print_test_result("Get AI Stats", success, None if success else f"Unexpected response: {response.text}")
+        except Exception as e:
+            self.print_test_result("Get AI Stats", False, str(e))
+
+    def test_get_total_users(self):
+        """Test getting total users"""
+        try:
+            response = requests.get(f"{self.analytics_url}/api/v1/user-stats/total")
+            success = response.status_code == 200 and "total_users" in response.json()
+            print(f"  Response status: {response.status_code}")
+            print(f"  Response: {response.text}")
+            self.print_test_result("Get Total Users", success, None if success else f"Unexpected response: {response.text}")
+        except Exception as e:
+            self.print_test_result("Get Total Users", False, str(e))
+
     def print_summary(self):
         """Print test summary"""
         self.print_header("TEST SUMMARY")
@@ -442,12 +570,16 @@ class ServiceTester:
 if __name__ == "__main__":
     # Parse command line arguments for custom URL
     api_url = "http://localhost:8080"
+    analytics_url = "http://localhost:8083"
     
     if len(sys.argv) > 1:
         api_url = sys.argv[1]
+    if len(sys.argv) > 2:
+        analytics_url = sys.argv[2]
     
     print(f"Testing API Gateway at: {api_url}")
+    print(f"Testing Analytics Service at: {analytics_url}")
     
     # Run tests
-    tester = ServiceTester(api_url)
+    tester = ServiceTester(api_url, analytics_url)
     tester.run_all_tests() 
