@@ -91,7 +91,7 @@ class ServiceTester:
         
         # Test Image Processing
         print(f"\n{Fore.CYAN}Testing Image Processing{Style.RESET_ALL}")
-        self.test_image_from_url()
+        self.test_image_processing()
         
         # Test Groq Provider
         print(f"\n{Fore.CYAN}Testing Groq Provider{Style.RESET_ALL}")
@@ -463,41 +463,49 @@ class ServiceTester:
         except Exception as e:
             self.print_test_result("User Logout", False, str(e))
 
-    def test_image_from_url(self):
+    def test_image_processing(self):
         """Test image processing from URL"""
+        print("\nTesting Image Processing")
+        
+        # Updated URL to use the new consolidated endpoint
+        url = f"{self.api_gateway_url}/api/v1/images"
+        
+        # Rest of the function remains the same
+        payload = {
+            "prompt": "What is in this image? Describe it in detail.",
+            "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg",
+            "model": "gpt-4o-mini"
+        }
+        
+        print(f"  Sending request to: {url}")
+        print(f"  Request payload: {json.dumps(payload)}")
+        
         try:
-            headers = {}
-            if self.token:
-                headers["Authorization"] = f"Bearer {self.token}"
-                
-            payload = {
-                "prompt": "What is in this image? Describe it in detail.",
-                "image_url": self.sample_image_url,
-                "model": "gpt-4o-mini"  # Use a model that supports vision
-            }
-            
-            print(f"  Sending request to: {self.api_gateway_url}/api/v1/images/url")
-            print(f"  Request payload: {json.dumps(payload)}")
-            
-            response = requests.post(
-                f"{self.api_gateway_url}/api/v1/images/url",
-                headers=headers,
-                json=payload
-            )
-            
-            success = response.status_code == 200
+            response = requests.post(url, json=payload, headers=self.get_auth_headers())
             print(f"  Response status: {response.status_code}")
+            print(f"  Response: {response.text}")
             
-            if success:
-                data = response.json()
-                print(f"  AI Response: {data.get('text', '')[:100]}...")  # Print first 100 chars
-                print(f"  Model used: {data.get('model', 'unknown')}")
-            else:
-                print(f"  Response: {response.text}")
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    model_used = data.get('model', 'unknown')
+                    content = data.get('content', '')
+                    
+                    # Print a preview of the content
+                    preview = content[:100] + "..." if len(content) > 100 else content
+                    print(f"  AI Response: {preview}")
+                    print(f"  Model used: {model_used}")
+                    self.test_results["Image Processing from URL"] = "PASSED"
+                    return True
+                except json.JSONDecodeError:
+                    print("  Invalid JSON response")
             
-            self.print_test_result("Image Processing from URL", success)
+            self.test_results["Image Processing from URL"] = "FAILED"
+            return False
         except Exception as e:
-            self.print_test_result("Image Processing from URL", False, str(e))
+            print(f"  Error: {str(e)}")
+            self.test_results["Image Processing from URL"] = "FAILED"
+            return False
 
     # Analytics Service Tests
     def test_analytics_health(self):

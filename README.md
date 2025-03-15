@@ -20,6 +20,7 @@ A scalable microservices architecture built with Go, providing a foundation for 
 - Text embedding generation
 - Semantic similarity search
 - Vector database integration
+- Support for multiple AI providers (OpenAI, Groq, Zyphra)
 
 ## Prerequisites
 
@@ -68,12 +69,24 @@ The services will be available at:
 
 #### Completions
 - `POST /api/v1/completions` - Generate text completion
+- `POST /api/v1/completions/stream` - Generate streaming text completion
 
 #### Embeddings
 - `POST /api/v1/embeddings` - Create embedding
 - `GET /api/v1/embeddings/{id}` - Get embedding
 - `DELETE /api/v1/embeddings/{id}` - Delete embedding
 - `POST /api/v1/similarity` - Find similar embeddings
+
+#### Image Processing
+- `POST /api/v1/images` - Process images from URL, base64, or file upload (supports both JSON and multipart form data)
+
+#### Audio Transcription
+- `POST /api/v1/audio/transcribe` - Transcribe audio file
+
+#### Text-to-Speech (TTS)
+- `POST /api/v1/tts/synthesize` - Convert text to speech
+- `POST /api/v1/tts/clone-voice` - Convert text to speech with voice cloning
+- `POST /api/v1/tts/emotion` - Convert text to speech with emotion control
 
 ## API Gateway Authentication
 
@@ -128,7 +141,6 @@ Access Zyphra's Text-to-Speech capabilities through these endpoints:
 
 - **Basic TTS**: `/api/v1/tts/synthesize`
 - **Voice Cloning**: `/api/v1/tts/clone-voice`
-- **TTS with Uploaded Voice**: `/api/v1/tts/upload-voice`
 - **TTS with Emotion Control**: `/api/v1/tts/emotion`
 
 #### Example Zyphra TTS request
