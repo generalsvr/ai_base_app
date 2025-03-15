@@ -148,7 +148,7 @@ class OpenAIService:
             
             # Prepare the image content
             if is_url:
-                image_content = {"type": "input_image", "image_url": image_data}
+                image_url = image_data
             else:
                 # Convert bytes to base64 if needed
                 if isinstance(image_data, bytes):
@@ -156,10 +156,7 @@ class OpenAIService:
                 else:
                     b64_image = image_data
                 
-                image_content = {
-                    "type": "input_image",
-                    "image_url": f"data:image/jpeg;base64,{b64_image}"
-                }
+                image_url = f"data:image/jpeg;base64,{b64_image}"
             
             # Create the API request
             response = await self.client.responses.create(
@@ -169,17 +166,17 @@ class OpenAIService:
                         "role": "user",
                         "content": [
                             {"type": "input_text", "text": prompt},
-                            image_content
+                            {"type": "input_image", "image_url": image_url},
                         ]
                     }
                 ]
             )
             
-            # Extract only the fields we need, avoiding direct attribute access
+            # Extract output text from the response
             result = {
-                "model": model,  # Just use the model name we sent
-                "text": response.output_text,  # This should be safe
-                "finish_reason": None  # Explicitly set to None
+                "model": model,
+                "text": response.output_text,
+                "finish_reason": None  # Not provided in this API
             }
             
             logger.info(f"Successfully processed image with model {model}")

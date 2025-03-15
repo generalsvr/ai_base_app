@@ -20,6 +20,7 @@ class CompletionRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     provider: Optional[Provider] = Provider.OPENAI
+    user_id: Optional[str] = None
 
 
 class Choice(BaseModel):
@@ -43,6 +44,7 @@ class EmbeddingRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     provider: Optional[Provider] = Provider.OPENAI
+    user_id: Optional[str] = None
 
 
 class EmbeddingData(BaseModel):
@@ -73,6 +75,7 @@ class SimilarityRequest(BaseModel):
     api_key: Optional[str] = None
     base_url: Optional[str] = None
     provider: Optional[Provider] = Provider.OPENAI
+    user_id: Optional[str] = None
 
 
 class SimilarityResult(BaseModel):
@@ -86,28 +89,21 @@ class SimilarityResponse(BaseModel):
 
 
 # Image processing models
-class ImageUrlRequest(BaseModel):
-    prompt: str
-    image_url: HttpUrl
-    model: Optional[str] = None
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    provider: Optional[Provider] = Provider.OPENAI
-
-
-class ImageFileRequest(BaseModel):
-    prompt: str
-    image_base64: str = Field(..., description="Base64 encoded image data")
-    model: Optional[str] = None
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
-    provider: Optional[Provider] = Provider.OPENAI
-
-
 class ImageResponse(BaseModel):
     text: str
     model: str
     finish_reason: Optional[str] = None
+
+
+class ImageProcessingRequest(BaseModel):
+    prompt: str
+    image_url: Optional[str] = None
+    image_base64: Optional[str] = None
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    provider: str = Provider.OPENAI
+    user_id: Optional[str] = None
 
 
 # Audio models - Transcription
@@ -119,6 +115,7 @@ class AudioTranscriptionRequest(BaseModel):
     temperature: Optional[float] = 0.0
     api_key: Optional[str] = None
     provider: Optional[Provider] = Provider.GROQ
+    user_id: Optional[str] = None
 
 
 class AudioTranscriptionResponse(BaseModel):
@@ -137,6 +134,7 @@ class TTSRequest(BaseModel):
     speaker_noised: Optional[bool] = None
     api_key: Optional[str] = None
     provider: Optional[Provider] = Provider.ZYPHRA
+    user_id: Optional[str] = None
 
 
 class TTSCloneVoiceRequest(BaseModel):
@@ -151,6 +149,7 @@ class TTSCloneVoiceRequest(BaseModel):
     speaker_noised: Optional[bool] = None
     api_key: Optional[str] = None
     provider: Optional[Provider] = Provider.ZYPHRA
+    user_id: Optional[str] = None
 
 
 class TTSEmotionControl(BaseModel):

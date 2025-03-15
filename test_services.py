@@ -467,44 +467,57 @@ class ServiceTester:
         """Test image processing from URL"""
         print("\nTesting Image Processing")
         
-        # Updated URL to use the new consolidated endpoint
+        # Use the new consolidated endpoint
         url = f"{self.api_gateway_url}/api/v1/images"
         
-        # Rest of the function remains the same
         payload = {
             "prompt": "What is in this image? Describe it in detail.",
-            "image_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg",
-            "model": "gpt-4o-mini"
+            "image_url": self.sample_image_url,
+            "model": "gpt-4o-mini",
+            "provider": "openai"  # explicitly specify the provider
+        }
+        
+        # Make sure we send the Content-Type header
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token if self.token else self.api_key}"
         }
         
         print(f"  Sending request to: {url}")
         print(f"  Request payload: {json.dumps(payload)}")
         
         try:
-            response = requests.post(url, json=payload, headers=self.get_auth_headers())
+            # Use json parameter instead of data for proper JSON encoding
+            response = requests.post(
+                url, 
+                json=payload, 
+                headers=headers
+            )
             print(f"  Response status: {response.status_code}")
-            print(f"  Response: {response.text}")
             
             if response.status_code == 200:
                 try:
                     data = response.json()
                     model_used = data.get('model', 'unknown')
-                    content = data.get('content', '')
+                    text = data.get('text', '')
                     
                     # Print a preview of the content
-                    preview = content[:100] + "..." if len(content) > 100 else content
+                    preview = text[:100] + "..." if len(text) > 100 else text
                     print(f"  AI Response: {preview}")
                     print(f"  Model used: {model_used}")
-                    self.test_results["Image Processing from URL"] = "PASSED"
+                    self.print_test_result("Image Processing", True)
                     return True
                 except json.JSONDecodeError:
-                    print("  Invalid JSON response")
+                    print(f"  Invalid JSON response: {response.text}")
+                    self.print_test_result("Image Processing", False, "Invalid JSON response")
+            else:
+                print(f"  Response: {response.text}")
+                self.print_test_result("Image Processing", False, f"Status code: {response.status_code}")
             
-            self.test_results["Image Processing from URL"] = "FAILED"
             return False
         except Exception as e:
             print(f"  Error: {str(e)}")
-            self.test_results["Image Processing from URL"] = "FAILED"
+            self.print_test_result("Image Processing", False, str(e))
             return False
 
     # Analytics Service Tests
@@ -638,12 +651,18 @@ class ServiceTester:
     def test_groq_audio_transcription(self):
         """Test audio transcription with Groq provider"""
         try:
-            # Create a simple test audio file instead of downloading
-            audio_content = b'RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
+            # Create a valid MP3 file (minimal but valid format)
+            # This is a minimal MP3 header that should pass format validation
+            # ID3v2 tag + MP3 frame header
+            audio_content = (
+                b'ID3\x03\x00\x00\x00\x00\x00\x00'  # ID3v2 header
+                b'\xff\xfb\x90\x64\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # MP3 frame header
+                b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # Dummy data
+            )
             
             # Create multipart form data
             files = {
-                'file': ('test.wav', audio_content, 'audio/wav')
+                'file': ('test.mp3', audio_content, 'audio/mpeg')
             }
             data = {
                 'provider': 'groq',
@@ -662,12 +681,18 @@ class ServiceTester:
             # If API key is not set, we expect a 500 error
             if response.status_code == 500 and "API key" in response.text:
                 print("  Groq API key not set. Skipping test.")
-                self.print_test_result("Groq Audio Transcription", True, "Skipped - API key not set")
+                self.print_test_result("Groq Audio Transcription", False, "API key not set")
                 return
                 
             if response.status_code == 500 and "Connection error" in response.text:
                 print("  Groq API connection error. Skipping test.")
-                self.print_test_result("Groq Audio Transcription", True, "Skipped - Connection error")
+                self.print_test_result("Groq Audio Transcription", False, "Connection error")
+                return
+            
+            # Check for file format error 
+            if response.status_code == 500 and "file must be one of the following types" in response.text:
+                print("  Groq API file format error. Fix file format to match Groq requirements.")
+                self.print_test_result("Groq Audio Transcription", False, "File format error - fix test file format")
                 return
                 
             try:
@@ -722,23 +747,26 @@ class ServiceTester:
     def test_zyphra_tts_emotion(self):
         """Test text-to-speech with emotion control using Zyphra provider"""
         try:
+            # Use form data instead of JSON
+            form_data = {
+                "text": "I'm so excited to be testing this new feature!",
+                "provider": "zyphra",
+                "happiness": 0.8,
+                "neutral": 0.5,
+                "sadness": 0.0,
+                "disgust": 0.0,
+                "fear": 0.0,
+                "surprise": 0.2,
+                "anger": 0.0,
+                "other": 0.2,
+                "speaking_rate": 15.0,
+                "mime_type": "audio/webm"
+            }
+            
             response = requests.post(
                 f"{self.api_gateway_url}/api/v1/tts/emotion",
-                headers=self.get_auth_headers(),
-                json={
-                    "text": "I'm so excited to be testing this new feature!",
-                    "provider": "zyphra",
-                    "emotion": {
-                        "joy": 0.8,
-                        "sadness": 0.0,
-                        "disgust": 0.0,
-                        "fear": 0.0,
-                        "surprise": 0.2,
-                        "anger": 0.0,
-                        "other": 0.0
-                    },
-                    "mime_type": "audio/webm"
-                }
+                headers=self.get_form_headers(),
+                data=form_data
             )
             
             print(f"  Response status: {response.status_code}")
@@ -746,13 +774,13 @@ class ServiceTester:
             # If API key is not set, we expect a 500 error
             if response.status_code == 500 and "API key" in response.text:
                 print("  Zyphra API key not set. Skipping test.")
-                self.print_test_result("Zyphra TTS with Emotion", True, "Skipped - API key not set")
+                self.print_test_result("Zyphra TTS with Emotion", False, "API key not set")
                 return
                 
             # Handle 422 error (validation error)
             if response.status_code == 422:
-                print("  Zyphra API validation error. Skipping test.")
-                self.print_test_result("Zyphra TTS with Emotion", True, "Skipped - Validation error")
+                print("  Zyphra API validation error. Fix request payload to match API requirements.")
+                self.print_test_result("Zyphra TTS with Emotion", False, "Validation error - fix request format")
                 return
                 
             success = response.status_code == 200 and response.headers.get('Content-Type', '').startswith('audio/')

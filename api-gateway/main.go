@@ -115,8 +115,12 @@ func authMiddleware(secretKey string, userServiceURL string, logger *zap.Logger)
 }
 
 func main() {
-	// Initialize logger
-	logger, _ := zap.NewProduction()
+	// Configure logger
+	logger, err := zap.NewProduction()
+	if err != nil {
+		fmt.Printf("Failed to create logger: %v\n", err)
+		os.Exit(1)
+	}
 	defer logger.Sync()
 
 	// Load configuration
@@ -125,43 +129,40 @@ func main() {
 		logger.Fatal("Failed to load configuration", zap.Error(err))
 	}
 
-	// Create router
-	router := mux.NewRouter()
-
-	// Apply middleware
-	router.Use(authMiddleware(config.APISecretKey, config.UserServiceURL, logger))
+	// Set up router
+	r := mux.NewRouter()
 
 	// Health check endpoint
-	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
 	}).Methods("GET")
 
+	// API routes with authentication
+	api := r.PathPrefix("/api/v1").Subrouter()
+	api.Use(authMiddleware(config.APISecretKey, config.UserServiceURL, logger))
+
 	// User service routes
-	router.PathPrefix("/api/v1/users").Handler(createProxyHandler(config.UserServiceURL, logger))
-	router.HandleFunc("/api/v1/login", createProxyHandler(config.UserServiceURL, logger)).Methods("POST")
-	router.HandleFunc("/api/v1/logout", createProxyHandler(config.UserServiceURL, logger)).Methods("POST")
-	router.HandleFunc("/api/v1/verify-token", createProxyHandler(config.UserServiceURL, logger)).Methods("POST", "GET")
+	api.PathPrefix("/users").Handler(createProxyHandler(config.UserServiceURL, logger))
+	api.PathPrefix("/login").Handler(createProxyHandler(config.UserServiceURL, logger))
+	api.PathPrefix("/logout").Handler(createProxyHandler(config.UserServiceURL, logger))
+	api.PathPrefix("/verify-token").Handler(createProxyHandler(config.UserServiceURL, logger))
+
+	// AI service routes
+	api.PathPrefix("/completions").Handler(createProxyHandler(config.AIServiceURL, logger))
+	api.PathPrefix("/embeddings").Handler(createProxyHandler(config.AIServiceURL, logger))
+	api.PathPrefix("/similarity").Handler(createProxyHandler(config.AIServiceURL, logger))
+	api.PathPrefix("/images").Handler(createProxyHandler(config.AIServiceURL, logger))
+	api.PathPrefix("/audio").Handler(createProxyHandler(config.AIServiceURL, logger))
+	api.PathPrefix("/tts").Handler(createProxyHandler(config.AIServiceURL, logger))
 
 	// Analytics service routes
-	router.PathPrefix("/api/v1/analytics").Handler(createProxyHandler(config.AnalyticsServiceURL, logger))
-
-	// AI service routes - standard endpoints
-	router.PathPrefix("/api/v1/completions").Handler(createProxyHandler(config.AIServiceURL, logger))
-	router.PathPrefix("/api/v1/embeddings").Handler(createProxyHandler(config.AIServiceURL, logger))
-	router.PathPrefix("/api/v1/similarity").Handler(createProxyHandler(config.AIServiceURL, logger))
-	router.PathPrefix("/api/v1/images").Handler(createProxyHandler(config.AIServiceURL, logger))
-
-	// AI service routes - Groq provider endpoints
-	router.PathPrefix("/api/v1/audio/transcribe").Handler(createProxyHandler(config.AIServiceURL, logger))
-
-	// AI service routes - Zyphra TTS provider endpoints
-	router.PathPrefix("/api/v1/tts").Handler(createProxyHandler(config.AIServiceURL, logger))
+	api.PathPrefix("/analytics").Handler(createProxyHandler(config.AnalyticsServiceURL, logger))
+	api.PathPrefix("/stats").Handler(createProxyHandler(config.AnalyticsServiceURL, logger))
 
 	// Start HTTP server
 	srv := &http.Server{
 		Addr:         ":" + config.Port,
-		Handler:      router,
+		Handler:      r,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -200,7 +201,7 @@ func createProxyHandler(targetURL string, logger *zap.Logger) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Create a new HTTP client
 		client := &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 30 * time.Second, // Increased timeout for image processing
 		}
 
 		// Construct the target URL
@@ -209,19 +210,29 @@ func createProxyHandler(targetURL string, logger *zap.Logger) http.HandlerFunc {
 			url = fmt.Sprintf("%s?%s", url, r.URL.RawQuery)
 		}
 
-		// Create a new request
+		// Create a new request with the same body
 		req, err := http.NewRequest(r.Method, url, r.Body)
 		if err != nil {
 			logger.Error("Failed to create request", zap.Error(err))
-			w.WriteHeader(http.StatusInternalServerError)
+			http.Error(w, "Failed to create request to target service", http.StatusInternalServerError)
 			return
 		}
 
-		// Copy all headers
+		// Copy all headers to preserve Content-Type, Content-Length, etc.
 		for name, values := range r.Header {
 			for _, value := range values {
 				req.Header.Add(name, value)
 			}
+		}
+
+		// Special handling for paths related to image processing
+		if strings.Contains(r.URL.Path, "/api/v1/images") {
+			// Log additional information for debugging
+			contentType := r.Header.Get("Content-Type")
+			logger.Info("Processing image request",
+				zap.String("path", r.URL.Path),
+				zap.String("content-type", contentType),
+				zap.String("method", r.Method))
 		}
 
 		// Execute the request
@@ -229,8 +240,9 @@ func createProxyHandler(targetURL string, logger *zap.Logger) http.HandlerFunc {
 		if err != nil {
 			logger.Error("Failed to forward request",
 				zap.String("target", url),
+				zap.String("method", r.Method),
 				zap.Error(err))
-			w.WriteHeader(http.StatusBadGateway)
+			http.Error(w, fmt.Sprintf("Failed to forward request to %s: %v", targetURL, err), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
@@ -246,7 +258,7 @@ func createProxyHandler(targetURL string, logger *zap.Logger) http.HandlerFunc {
 		w.WriteHeader(resp.StatusCode)
 
 		// Copy the response body
-		limited := http.MaxBytesReader(w, resp.Body, 1048576)
+		limited := http.MaxBytesReader(w, resp.Body, 10*1024*1024) // Increased limit for larger responses
 		_, err = io.Copy(w, limited)
 		if err != nil {
 			logger.Error("Failed to write response", zap.Error(err))

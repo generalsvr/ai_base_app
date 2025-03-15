@@ -77,8 +77,8 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - ZYPHRA_API_KEY=${ZYPHRA_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-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}
+      - ZYPHRA_API_KEY=${ZYPHRA_API_KEY:-zsk-ea54bf5050f153172cc0a336f82610bf0e8512f9d3006f967b3e27fbadd8aac0}
     depends_on:
       qdrant:
         condition: service_started

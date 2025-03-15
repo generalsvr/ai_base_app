@@ -21,6 +21,9 @@ func NewHandler(repo *repository.Repository) *Handler {
 
 // RegisterRoutes registers all API routes
 func (h *Handler) RegisterRoutes(router *gin.Engine) {
+	// Add root level health check for Docker healthcheck
+	router.GET("/health", h.HealthCheck)
+
 	v1 := router.Group("/api/v1")
 	{
 		// User statistics endpoints
@@ -130,13 +133,83 @@ func (h *Handler) GetAIStats(c *gin.Context) {
 		return
 	}
 
-	stats, err := h.repo.GetAIStats(start, end)
+	// Add a day to end date to include the end day itself in the query
+	// This is because timestamps will have time components, so "2023-01-01" needs to include all times on that day
+	queryEnd := end.AddDate(0, 0, 1)
+
+	// Try to get statistics from the raw logs directly
+	data, err := h.repo.GetAIStatsFromLogs(start, queryEnd)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, stats)
+	// Check if there are no API calls in the logs
+	// Handle both int and int64 types safely
+	totalCalls := 0
+	switch v := data["totalAPICalls"].(type) {
+	case int:
+		totalCalls = v
+	case int64:
+		totalCalls = int(v)
+	case float64:
+		totalCalls = int(v)
+	}
+
+	if totalCalls == 0 {
+		// Run aggregation on each day in the range to ensure the stats are up to date
+		currentDate := start
+		for currentDate.Before(queryEnd) {
+			// Trigger aggregation for this day
+			h.repo.AggregateAICallsToStats(currentDate)
+			currentDate = currentDate.AddDate(0, 0, 1)
+		}
+
+		// Try to get statistics from the aggregated table
+		stats, err := h.repo.GetAIStats(start, end)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Convert to the expected format
+		if len(stats) > 0 {
+			// Combine stats from multiple days
+			totalCalls := 0
+			completionCalls := 0
+			totalTokens := 0
+			totalResponseTime := 0.0
+			nDays := 0
+
+			for _, stat := range stats {
+				totalCalls += stat.TotalAPICalls
+				completionCalls += stat.CompletionCalls
+				totalTokens += stat.TokensUsed
+				totalResponseTime += stat.AverageResponseTime
+				nDays++
+			}
+
+			// Calculate averages
+			avgResponseTime := 0.0
+			if nDays > 0 {
+				avgResponseTime = totalResponseTime / float64(nDays)
+			}
+
+			// Create response
+			data = map[string]interface{}{
+				"totalAPICalls":       totalCalls,
+				"completionCalls":     completionCalls,
+				"averageResponseTime": avgResponseTime,
+				"tokensUsed":          totalTokens,
+				"callTypeDistribution": map[string]int{
+					"completion": completionCalls,
+					"embedding":  0, // We could add this but it needs to be calculated
+				},
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, data)
 }
 
 // GetActiveUsers gets the count of active users per day
