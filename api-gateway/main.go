@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,9 +18,11 @@ import (
 
 // Config holds all configuration for the API Gateway
 type Config struct {
-	Port           string `mapstructure:"PORT"`
-	UserServiceURL string `mapstructure:"USER_SERVICE_URL"`
-	AIServiceURL   string `mapstructure:"AI_SERVICE_URL"`
+	Port                string `mapstructure:"PORT"`
+	UserServiceURL      string `mapstructure:"USER_SERVICE_URL"`
+	AIServiceURL        string `mapstructure:"AI_SERVICE_URL"`
+	AnalyticsServiceURL string `mapstructure:"ANALYTICS_SERVICE_URL"`
+	APISecretKey        string `mapstructure:"API_SECRET_KEY"`
 }
 
 // loadConfig loads configuration from environment variables
@@ -30,6 +33,8 @@ func loadConfig() (*Config, error) {
 	viper.SetDefault("PORT", "8080")
 	viper.SetDefault("USER_SERVICE_URL", "http://user-service:8081")
 	viper.SetDefault("AI_SERVICE_URL", "http://ai-service:8082")
+	viper.SetDefault("ANALYTICS_SERVICE_URL", "http://analytics-service:8083")
+	viper.SetDefault("API_SECRET_KEY", "your-api-secret-key-change-me-in-production")
 
 	config := &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -37,6 +42,76 @@ func loadConfig() (*Config, error) {
 	}
 
 	return config, nil
+}
+
+// authMiddleware authenticates API requests using a Bearer token
+func authMiddleware(secretKey string, userServiceURL string, logger *zap.Logger) mux.MiddlewareFunc {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip auth for health check
+			if r.URL.Path == "/health" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Skip auth for login and user creation
+			if r.URL.Path == "/api/v1/login" || (r.URL.Path == "/api/v1/users" && r.Method == "POST") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check Bearer token format
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+				logger.Warn("Missing or invalid Authorization header")
+				http.Error(w, "Unauthorized: Missing or invalid Authorization header", http.StatusUnauthorized)
+				return
+			}
+
+			// Extract token
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+			if token == "" {
+				logger.Warn("Empty token")
+				http.Error(w, "Unauthorized: Empty token", http.StatusUnauthorized)
+				return
+			}
+
+			// If token matches API secret key, allow access (for direct API access)
+			if token == secretKey {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Otherwise, verify token with user service
+			client := &http.Client{Timeout: 5 * time.Second}
+			verifyReq, err := http.NewRequest("POST", userServiceURL+"/api/v1/verify-token", nil)
+			if err != nil {
+				logger.Error("Failed to create token verification request", zap.Error(err))
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			// Forward the token to the user service
+			verifyReq.Header.Set("Authorization", authHeader)
+
+			resp, err := client.Do(verifyReq)
+			if err != nil {
+				logger.Error("Failed to verify token with user service", zap.Error(err))
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				logger.Warn("Invalid token", zap.Int("status", resp.StatusCode))
+				http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			// Token is valid, proceed with the request
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func main() {
@@ -53,6 +128,9 @@ func main() {
 	// Create router
 	router := mux.NewRouter()
 
+	// Apply middleware
+	router.Use(authMiddleware(config.APISecretKey, config.UserServiceURL, logger))
+
 	// Health check endpoint
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -65,11 +143,20 @@ func main() {
 	router.HandleFunc("/api/v1/logout", createProxyHandler(config.UserServiceURL, logger)).Methods("POST")
 	router.HandleFunc("/api/v1/verify-token", createProxyHandler(config.UserServiceURL, logger)).Methods("POST", "GET")
 
-	// AI service routes - simplify by forwarding all AI endpoints directly
+	// Analytics service routes
+	router.PathPrefix("/api/v1/analytics").Handler(createProxyHandler(config.AnalyticsServiceURL, logger))
+
+	// AI service routes - standard endpoints
 	router.PathPrefix("/api/v1/completions").Handler(createProxyHandler(config.AIServiceURL, logger))
 	router.PathPrefix("/api/v1/embeddings").Handler(createProxyHandler(config.AIServiceURL, logger))
 	router.PathPrefix("/api/v1/similarity").Handler(createProxyHandler(config.AIServiceURL, logger))
 	router.PathPrefix("/api/v1/images").Handler(createProxyHandler(config.AIServiceURL, logger))
+
+	// AI service routes - Groq provider endpoints
+	router.PathPrefix("/api/v1/audio/transcribe").Handler(createProxyHandler(config.AIServiceURL, logger))
+
+	// AI service routes - Zyphra TTS provider endpoints
+	router.PathPrefix("/api/v1/tts").Handler(createProxyHandler(config.AIServiceURL, logger))
 
 	// Start HTTP server
 	srv := &http.Server{

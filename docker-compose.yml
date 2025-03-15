@@ -13,6 +13,7 @@ services:
       - USER_SERVICE_URL=http://user-service:8081
       - AI_SERVICE_URL=http://ai-service:8082
       - ANALYTICS_SERVICE_URL=http://analytics-service:8083
+      - API_SECRET_KEY=${API_SECRET_KEY:-your-api-secret-key-change-me-in-production}
     depends_on:
       - user-service
       - ai-service
@@ -25,6 +26,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # User Service
   user-service:
@@ -32,6 +39,8 @@ services:
       context: ./user-service
       dockerfile: Dockerfile
     container_name: user-service
+    ports:
+      - "8081:8081"  # Expose port for debugging
     environment:
       - DB_HOST=user-db
       - DB_PORT=5432
@@ -49,6 +58,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # AI Service
   ai-service:
@@ -62,6 +77,8 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
+      - ZYPHRA_API_KEY=${ZYPHRA_API_KEY:-}
     depends_on:
       qdrant:
         condition: service_started
@@ -73,6 +90,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   # Analytics Service
   analytics-service:
@@ -101,6 +124,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # User Database
   user-db:

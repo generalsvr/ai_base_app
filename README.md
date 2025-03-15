@@ -75,6 +75,78 @@ The services will be available at:
 - `DELETE /api/v1/embeddings/{id}` - Delete embedding
 - `POST /api/v1/similarity` - Find similar embeddings
 
+## API Gateway Authentication
+
+The API Gateway now requires authentication for all endpoints (except `/health`) using a Bearer token. This ensures that only authorized clients can access your microservices.
+
+### How to authenticate
+
+1. Include an `Authorization` header with a Bearer token in all your requests:
+
+```
+Authorization: Bearer your-api-secret-key
+```
+
+2. The token value should match the `API_SECRET_KEY` environment variable set in the API Gateway service.
+
+3. By default, the `API_SECRET_KEY` is set to `your-api-secret-key-change-me-in-production` in docker-compose.yml.
+
+4. For production, set a strong, unique value for `API_SECRET_KEY` as an environment variable:
+
+```bash
+export API_SECRET_KEY="your-strong-unique-secret-key"
+docker-compose up -d
+```
+
+### Example authenticated request
+
+```bash
+curl -X POST \
+  http://localhost:8080/api/v1/completions \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer your-api-secret-key' \
+  -d '{
+    "prompt": "Hello, world!",
+    "provider": "openai"
+  }'
+```
+
+## New AI Service Providers
+
+The API Gateway now supports the following AI service providers:
+
+### Groq Provider
+
+Access Groq's LLM capabilities through these endpoints:
+
+- **Text Completions**: `/api/v1/completions` with `"provider": "groq"`
+- **Audio Transcription**: `/api/v1/audio/transcribe` with `"provider": "groq"`
+
+### Zyphra Provider (TTS)
+
+Access Zyphra's Text-to-Speech capabilities through these endpoints:
+
+- **Basic TTS**: `/api/v1/tts/synthesize`
+- **Voice Cloning**: `/api/v1/tts/clone-voice`
+- **TTS with Uploaded Voice**: `/api/v1/tts/upload-voice`
+- **TTS with Emotion Control**: `/api/v1/tts/emotion`
+
+#### Example Zyphra TTS request
+
+```bash
+curl -X POST \
+  http://localhost:8080/api/v1/tts/synthesize \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer your-api-secret-key' \
+  -d '{
+    "text": "Hello, this is a test of the text to speech synthesis API.",
+    "speaking_rate": 15.0,
+    "language_iso_code": "en-us",
+    "mime_type": "audio/mp3"
+  }' \
+  --output output.mp3
+```
+
 ## Development
 
 ### Project Structure
