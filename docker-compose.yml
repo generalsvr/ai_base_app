@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # API Gateway service
   api-gateway:
     build:
       context: ./api-gateway
@@ -13,7 +12,6 @@ services:
       - USER_SERVICE_URL=http://user-service:8081
       - AI_SERVICE_URL=http://ai-service:8082
       - ANALYTICS_SERVICE_URL=http://analytics-service:8083
-      - API_SECRET_KEY=${API_SECRET_KEY:-your-api-secret-key-change-me-in-production}
     depends_on:
       - user-service
       - ai-service
@@ -33,14 +31,13 @@ services:
       retries: 3
       start_period: 10s
 
-  # User Service
   user-service:
     build:
       context: ./user-service
       dockerfile: Dockerfile
     container_name: user-service
     ports:
-      - "8081:8081"  # Expose port for debugging
+      - "8081:8081"
     environment:
       - DB_HOST=user-db
       - DB_PORT=5432
@@ -65,7 +62,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # AI Service
   ai-service:
     build:
       context: ./ai-service
@@ -75,10 +71,11 @@ services:
       - "8082:8082"
     environment:
       - QDRANT_URL=http://qdrant:6333
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-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}
-      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - GROQ_API_KEY=${GROQ_API_KEY:-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}
-      - ZYPHRA_API_KEY=${ZYPHRA_API_KEY:-zsk-ea54bf5050f153172cc0a336f82610bf0e8512f9d3006f967b3e27fbadd8aac0}
+      - OPENAI_API_KEY=
+      - OPENAI_BASE_URL=
+      - GROQ_API_KEY=
+      - ZYPHRA_API_KEY=
+      - REPLICATE_API_TOKEN=
     depends_on:
       qdrant:
         condition: service_started
@@ -97,7 +94,6 @@ services:
       retries: 3
       start_period: 15s
 
-  # Analytics Service
   analytics-service:
     build:
       context: ./analytics-service
@@ -131,7 +127,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # User Database
   user-db:
     image: postgres:17
     container_name: user-db
@@ -150,7 +145,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Analytics Database
   analytics-db:
     image: postgres:17
     container_name: analytics-db
@@ -169,7 +163,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Qdrant Vector Database
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant

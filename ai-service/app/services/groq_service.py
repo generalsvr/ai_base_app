@@ -47,11 +47,15 @@ class GroqService:
                 stop=stop
             )
             
+            # Log raw response format for debugging
+            logger.debug(f"Groq API raw completion response: {chat_completion}")
+            
             # Map the chat completion response to be compatible with the OpenAI completions API
             completion_text = chat_completion.choices[0].message.content
             
-            return {
+            response = {
                 "id": chat_completion.id,
+                "object": "text_completion",
                 "choices": [{
                     "text": completion_text,
                     "index": 0,
@@ -59,8 +63,18 @@ class GroqService:
                     "finish_reason": chat_completion.choices[0].finish_reason
                 }],
                 "created": chat_completion.created,
-                "model": chat_completion.model
+                "model": chat_completion.model,
+                "usage": {
+                    "prompt_tokens": chat_completion.usage.prompt_tokens if hasattr(chat_completion, 'usage') and chat_completion.usage else 0,
+                    "completion_tokens": chat_completion.usage.completion_tokens if hasattr(chat_completion, 'usage') and chat_completion.usage else 0,
+                    "total_tokens": chat_completion.usage.total_tokens if hasattr(chat_completion, 'usage') and chat_completion.usage else 0
+                }
             }
+            
+            # Log transformed response
+            logger.debug(f"Transformed Groq completion response: {response}")
+            
+            return response
             
         except Exception as e:
             logger.error(f"Error creating completion with Groq: {e}")
@@ -92,11 +106,18 @@ class GroqService:
                 stream=True
             )
             
+            # Log first chunk for debugging
+            first_chunk = True
+            
             async for chunk in stream:
                 # Reformat to match the format expected by our API
                 if chunk.choices and chunk.choices[0].delta.content:
-                    yield {
+                    if first_chunk:
+                        logger.debug(f"Groq API raw stream chunk: {chunk}")
+                    
+                    response = {
                         "id": chunk.id,
+                        "object": "text_completion",
                         "choices": [{
                             "text": chunk.choices[0].delta.content,
                             "index": 0,
@@ -104,8 +125,19 @@ class GroqService:
                             "finish_reason": chunk.choices[0].finish_reason
                         }],
                         "created": chunk.created,
-                        "model": chunk.model
+                        "model": chunk.model,
+                        "usage": {
+                            "prompt_tokens": 0,  # Not available in stream chunks
+                            "completion_tokens": 0,
+                            "total_tokens": 0
+                        }
                     }
+                    
+                    if first_chunk:
+                        logger.debug(f"Transformed Groq stream chunk: {response}")
+                        first_chunk = False
+                    
+                    yield response
                     
         except Exception as e:
             logger.error(f"Error creating streaming completion with Groq: {e}")
@@ -148,9 +180,12 @@ class GroqService:
             # The synchronous client is used here since Groq doesn't specify an async API for audio
             sync_client = Groq(api_key=self.api_key)
             
+            # Create a temporary filename
+            temp_filename = "audio_file.mp3"
+            
             # Create a transcription using the Whisper model
             transcription = sync_client.audio.transcriptions.create(
-                file=audio_file,
+                file=(temp_filename, audio_file),  # Pass a tuple of (filename, content)
                 model=model,
                 prompt=prompt,
                 language=language,

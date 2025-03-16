@@ -24,7 +24,6 @@ type Config struct {
 	UserServiceURL      string `mapstructure:"USER_SERVICE_URL"`
 	AIServiceURL        string `mapstructure:"AI_SERVICE_URL"`
 	AnalyticsServiceURL string `mapstructure:"ANALYTICS_SERVICE_URL"`
-	APISecretKey        string `mapstructure:"API_SECRET_KEY"`
 }
 
 // loadConfig loads configuration from environment variables
@@ -36,7 +35,6 @@ func loadConfig() (*Config, error) {
 	viper.SetDefault("USER_SERVICE_URL", "http://user-service:8081")
 	viper.SetDefault("AI_SERVICE_URL", "http://ai-service:8082")
 	viper.SetDefault("ANALYTICS_SERVICE_URL", "http://analytics-service:8083")
-	viper.SetDefault("API_SECRET_KEY", "your-api-secret-key-change-me-in-production")
 
 	config := &Config{}
 	if err := viper.Unmarshal(config); err != nil {
@@ -47,7 +45,7 @@ func loadConfig() (*Config, error) {
 }
 
 // authMiddleware authenticates API requests using either Bearer token or API key
-func authMiddleware(secretKey string, userServiceURL string, logger *zap.Logger) mux.MiddlewareFunc {
+func authMiddleware(userServiceURL string, logger *zap.Logger) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Skip auth for health check
@@ -95,13 +93,7 @@ func authMiddleware(secretKey string, userServiceURL string, logger *zap.Logger)
 				return
 			}
 
-			// If token matches API secret key, allow access (for direct API access)
-			if token == secretKey {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Otherwise, verify token with user service
+			// Verify token with user service
 			client := &http.Client{Timeout: 5 * time.Second}
 			verifyReq, err := http.NewRequest("POST", userServiceURL+"/api/v1/verify-token", nil)
 			if err != nil {
@@ -208,7 +200,7 @@ func main() {
 
 	// API routes with authentication
 	api := r.PathPrefix("/api/v1").Subrouter()
-	api.Use(authMiddleware(config.APISecretKey, config.UserServiceURL, logger))
+	api.Use(authMiddleware(config.UserServiceURL, logger))
 
 	// User service routes
 	api.PathPrefix("/users").Handler(createProxyHandler(config.UserServiceURL, logger))
@@ -292,6 +284,27 @@ func createProxyHandler(targetURL string, logger *zap.Logger) http.HandlerFunc {
 		for name, values := range r.Header {
 			for _, value := range values {
 				req.Header.Add(name, value)
+			}
+		}
+
+		// For AI service requests, convert Authorization Bearer token to X-API-Key header
+		// This is needed because the AI service uses X-API-Key for authentication
+		if strings.Contains(targetURL, "ai-service") {
+			// Check if X-API-Key is already set in request
+			if r.Header.Get("X-API-Key") == "" {
+				// If no X-API-Key is set, try to use Authorization token as fallback
+				authHeader := r.Header.Get("Authorization")
+				if strings.HasPrefix(authHeader, "Bearer ") {
+					// Extract the token part
+					token := strings.TrimPrefix(authHeader, "Bearer ")
+					// Add it as X-API-Key header
+					req.Header.Set("X-API-Key", token)
+					logger.Debug("Forwarded Authorization token as X-API-Key",
+						zap.String("path", r.URL.Path))
+				}
+			} else {
+				logger.Debug("Using provided X-API-Key header",
+					zap.String("path", r.URL.Path))
 			}
 		}
 

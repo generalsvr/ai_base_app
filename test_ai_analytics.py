@@ -42,11 +42,22 @@ def send_ai_completion_request(prompt, user_id="test_user", model="gpt-3.5-turbo
         "model": model,
         "max_tokens": 100,
         "temperature": 0.7,
-        "user_id": user_id
+        "user_id": user_id,
+        "provider": "openai",
+        "openai_params": {
+            "max_tokens": 100,
+            "temperature": 0.7
+        }
+    }
+    
+    # Add authentication headers
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": "sk_test_analytics_key"  # Use a test API key
     }
     
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
@@ -59,11 +70,18 @@ def send_ai_embedding_request(text, user_id="test_user", model="text-embedding-3
     payload = {
         "input": text,
         "model": model,
-        "user_id": user_id
+        "user_id": user_id,
+        "provider": "openai"
+    }
+    
+    # Add authentication headers
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-Key": "sk_test_analytics_key"  # Use a test API key
     }
     
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:

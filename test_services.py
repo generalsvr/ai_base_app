@@ -6,6 +6,7 @@ import sys
 import os
 import base64
 from colorama import init, Fore, Style
+import datetime
 
 # Initialize colorama for colored output
 init()
@@ -16,6 +17,7 @@ class ServiceTester:
         self.analytics_url = analytics_url
         self.token = None
         self.user_id = None
+        self.api_key = None  # Store API key for service authentication
         self.test_results = {
             "passed": 0,
             "failed": 0,
@@ -25,8 +27,6 @@ class ServiceTester:
         self.created_password = "Password123!"
         # Sample image URL for image processing tests
         self.sample_image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d5/2023_06_08_Raccoon1.jpg/1599px-2023_06_08_Raccoon1.jpg"
-        # API key for API Gateway authentication
-        self.api_key = os.environ.get("API_SECRET_KEY", "your-api-secret-key-change-me-in-production")
         # Sample audio for transcription tests - using a more reliable URL
         self.sample_audio_url = "https://www2.cs.uic.edu/~i101/SoundFiles/gettysburg.wav"
 
@@ -54,12 +54,13 @@ class ServiceTester:
         if include_content_type:
             headers["Content-Type"] = "application/json"
             
-        # For endpoints that don't require user authentication (like health checks),
-        # use the API key. For user-authenticated endpoints, use the user token if available.
-        if self.token and not self.api_gateway_url.endswith("/health"):
+        # Add authorization token if available
+        if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        else:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            
+        # Add API key for AI services if available
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
             
         return headers
 
@@ -77,6 +78,8 @@ class ServiceTester:
         # Test User Service via Gateway
         self.test_create_user()
         self.test_login()
+        # After login, create an API key for AI service tests
+        self.test_create_api_key()
         self.test_get_user()
         self.test_get_users_list()
         self.test_update_user()
@@ -102,6 +105,10 @@ class ServiceTester:
         print(f"\n{Fore.CYAN}Testing Zyphra TTS Provider{Style.RESET_ALL}")
         self.test_zyphra_tts()
         self.test_zyphra_tts_emotion()
+        
+        # Test Replicate Image Generation Provider
+        print(f"\n{Fore.CYAN}Testing Replicate Image Generation Provider{Style.RESET_ALL}")
+        self.test_replicate_image_generation()
         
         # Cleanup - logout first, then delete user
         self.test_logout()
@@ -182,6 +189,9 @@ class ServiceTester:
                 success = response.status_code == 200 and "token" in json_response
                 if success:
                     self.token = json_response["token"]
+                    # Update user_id from the response if available
+                    if "user" in json_response and "id" in json_response["user"]:
+                        self.user_id = json_response["user"]["id"]
                     print(f"  Got token: {self.token[:10]}...")
                 
                 self.print_test_result("User Login", success)
@@ -296,19 +306,33 @@ class ServiceTester:
 
     def test_ai_completion(self):
         """Test AI service completion endpoint"""
-        if not self.token:
-            self.print_test_result("AI Completion", False, "Not logged in")
+        if not self.token or not self.api_key:
+            self.print_test_result("AI Completion", False, "Missing authentication token or API key")
             return
             
         try:
+            # Use explicit headers with both token and API key
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.token}",
+                "X-API-Key": self.api_key
+            }
+            
+            print(f"  Using API key: {self.api_key[:10]}...")
+            
+            # Use OpenAI-compatible request format
             response = requests.post(
                 f"{self.api_gateway_url}/api/v1/completions",
-                headers=self.get_auth_headers(),
+                headers=headers,
                 json={
                     "prompt": "Hello, how are you?",
                     "max_tokens": 50,
                     "temperature": 0.7,
-                    "provider": "openai"  # Explicitly specify OpenAI provider
+                    "provider": "openai",  # Explicitly specify OpenAI provider
+                    "openai_params": {
+                        "max_tokens": 50,
+                        "temperature": 0.7
+                    }
                 }
             )
             print(f"  Response status: {response.status_code}")
@@ -330,20 +354,30 @@ class ServiceTester:
 
     def test_ai_completion_custom_model(self):
         """Test AI completion endpoint with custom model"""
-        if not self.token:
-            self.print_test_result("AI Completion Custom Model", False, "Missing token")
+        if not self.token or not self.api_key:
+            self.print_test_result("AI Completion Custom Model", False, "Missing authentication token or API key")
             return
             
         try:
             model = "gpt-3.5-turbo-instruct"
             print(f"  Testing custom model: {model}")
             
-            headers = {"Authorization": f"Bearer {self.token}"}
+            # Use explicit headers with both token and API key
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.token}",
+                "X-API-Key": self.api_key
+            }
+            
+            # Include the provider-specific parameters
             payload = {
                 "prompt": "Write a short poem about coding.",
                 "model": model,
-                "max_tokens": 100,
-                "temperature": 0.8
+                "provider": "openai",
+                "openai_params": {
+                    "max_tokens": 100,
+                    "temperature": 0.8
+                }
             }
             
             response = requests.post(
@@ -367,14 +401,18 @@ class ServiceTester:
 
     def test_ai_embedding(self):
         """Test AI embedding endpoint with default settings"""
-        if not self.token:
-            self.print_test_result("AI Embedding", False, "Missing token")
+        if not self.token or not self.api_key:
+            self.print_test_result("AI Embedding", False, "Missing token or API key")
             return
             
         try:
-            headers = {"Authorization": f"Bearer {self.token}"}
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "X-API-Key": self.api_key
+            }
             payload = {
-                "input": "This is a test sentence for embedding."
+                "input": "This is a test sentence for embedding.",
+                "provider": "openai"
             }
             
             response = requests.post(
@@ -400,18 +438,22 @@ class ServiceTester:
 
     def test_ai_embedding_custom_model(self):
         """Test AI embedding endpoint with custom model"""
-        if not self.token:
-            self.print_test_result("AI Embedding Custom Model", False, "Missing token")
+        if not self.token or not self.api_key:
+            self.print_test_result("AI Embedding Custom Model", False, "Missing token or API key")
             return
             
         try:
             model = "text-embedding-ada-002"
             print(f"  Testing custom embedding model: {model}")
             
-            headers = {"Authorization": f"Bearer {self.token}"}
+            headers = {
+                "Authorization": f"Bearer {self.token}",
+                "X-API-Key": self.api_key
+            }
             payload = {
                 "input": "This is a test sentence for custom embedding model.",
-                "model": model
+                "model": model,
+                "provider": "openai"
             }
             
             response = requests.post(
@@ -467,24 +509,32 @@ class ServiceTester:
         """Test image processing from URL"""
         print("\nTesting Image Processing")
         
+        # Skip test if no token or API key
+        if not self.token or not self.api_key:
+            self.print_test_result("Image Processing", False, "Missing authentication token or API key")
+            return
+            
         # Use the new consolidated endpoint
         url = f"{self.api_gateway_url}/api/v1/images"
         
+        # Updated payload with proper schema format
         payload = {
             "prompt": "What is in this image? Describe it in detail.",
             "image_url": self.sample_image_url,
             "model": "gpt-4o-mini",
-            "provider": "openai"  # explicitly specify the provider
+            "provider": "openai"
         }
         
-        # Make sure we send the Content-Type header
+        # Create explicit headers with both token and API key
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.token if self.token else self.api_key}"
+            "Authorization": f"Bearer {self.token}",
+            "X-API-Key": self.api_key
         }
         
         print(f"  Sending request to: {url}")
         print(f"  Request payload: {json.dumps(payload)}")
+        print(f"  Using API key: {self.api_key[:10]}...")
         
         try:
             # Use json parameter instead of data for proper JSON encoding
@@ -498,8 +548,16 @@ class ServiceTester:
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    model_used = data.get('model', 'unknown')
-                    text = data.get('text', '')
+                    
+                    # Handle both response formats (legacy and new)
+                    if "data" in data:
+                        # New format with data field
+                        model_used = data.get('model', 'unknown')
+                        text = data.get('data', {}).get('text', '')
+                    else:
+                        # Legacy format
+                        model_used = data.get('model', 'unknown')
+                        text = data.get('text', '')
                     
                     # Print a preview of the content
                     preview = text[:100] + "..." if len(text) > 100 else text
@@ -614,7 +672,11 @@ class ServiceTester:
                 json={
                     "prompt": "Write a short poem about coding.",
                     "provider": "groq",
-                    "model": "llama-3.3-70b-versatile"
+                    "model": "llama-3.3-70b-versatile",
+                    "groq_params": {
+                        "max_tokens": 100,
+                        "temperature": 0.7
+                    }
                 }
             )
             
@@ -651,27 +713,34 @@ class ServiceTester:
     def test_groq_audio_transcription(self):
         """Test audio transcription with Groq provider"""
         try:
-            # Create a valid MP3 file (minimal but valid format)
-            # This is a minimal MP3 header that should pass format validation
-            # ID3v2 tag + MP3 frame header
-            audio_content = (
-                b'ID3\x03\x00\x00\x00\x00\x00\x00'  # ID3v2 header
-                b'\xff\xfb\x90\x64\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # MP3 frame header
-                b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # Dummy data
-            )
-            
+            # Use a real MP3 file for transcription
+            try:
+                with open("test.mp3", "rb") as audio_file:
+                    audio_content = audio_file.read()
+                    print(f"  Loaded test.mp3 file: {len(audio_content)} bytes")
+            except FileNotFoundError:
+                print("  test.mp3 file not found. Please place the file in the current directory.")
+                self.print_test_result("Groq Audio Transcription", False, "test.mp3 file not found")
+                return
+                
             # Create multipart form data
             files = {
                 'file': ('test.mp3', audio_content, 'audio/mpeg')
             }
             data = {
                 'provider': 'groq',
-                'model': 'whisper-large-v3-turbo'
+                'model': 'whisper-large-v3-turbo',
+                'language': 'en'  # Specify language to help the model
             }
+            
+            # Include API key in headers
+            headers = self.get_form_headers()
+            if self.api_key:
+                headers["X-API-Key"] = self.api_key
             
             response = requests.post(
                 f"{self.api_gateway_url}/api/v1/audio/transcribe",
-                headers=self.get_form_headers(),
+                headers=headers,
                 files=files,
                 data=data
             )
@@ -721,8 +790,10 @@ class ServiceTester:
                 json={
                     "text": "Hello, this is a test of the Zyphra text to speech API.",
                     "provider": "zyphra",
-                    "speaking_rate": 15.0,
-                    "mime_type": "audio/webm"
+                    "zyphra_params": {
+                        "speaking_rate": 15.0,
+                        "mime_type": "audio/webm"
+                    }
                 }
             )
             
@@ -793,6 +864,100 @@ class ServiceTester:
         except Exception as e:
             self.print_test_result("Zyphra TTS with Emotion", False, str(e))
 
+    def test_replicate_image_generation(self):
+        """Test Replicate image generation API"""
+        # Skip this test if not logged in
+        if not self.token:
+            self.print_test_result("Replicate Image Generation", False, "User not logged in")
+            return
+
+        self.print_header("Testing Replicate Image Generation")
+        
+        try:
+            # Prepare test data for image generation
+            data = {
+                "prompt": "A fluffy cat sitting on a window sill watching a sunset",
+                "provider": "replicate",
+                # Using the Flux model as the default
+                "model": "black-forest-labs/flux-schnell",
+                "num_outputs": 1,
+                "replicate_params": {
+                    "guidance_scale": 7.5,
+                    "num_inference_steps": 4,  # Updated to match model requirements
+                    "disable_safety_checker": True
+                }
+            }
+            
+            # Send request to the API
+            response = requests.post(
+                f"{self.api_gateway_url}/api/v1/images/generate",
+                headers=self.get_auth_headers(),
+                json=data
+            )
+            
+            # Check response status code
+            if response.status_code == 200:
+                result = response.json()
+                
+                # Verify response format
+                if "data" in result and "url" in result["data"] and result["data"]["url"]:
+                    print(f"  Successfully generated image: {result['data']['url'][:60]}...")
+                    
+                    # Verify provider and model in response
+                    if result["provider"] == "replicate" and "model" in result:
+                        self.print_test_result("Replicate Image Generation", True)
+                    else:
+                        self.print_test_result("Replicate Image Generation", False,
+                                              f"Expected provider 'replicate' but got: {result.get('provider', 'none')}")
+                else:
+                    self.print_test_result("Replicate Image Generation", False,
+                                          f"Invalid response format: {result}")
+            else:
+                error_msg = response.text if response.text else f"Status code: {response.status_code}"
+                self.print_test_result("Replicate Image Generation", False, error_msg)
+                
+        except Exception as e:
+            self.print_test_result("Replicate Image Generation", False, str(e))
+
+    def test_create_api_key(self):
+        """Test creating a new API key for the user"""
+        if not self.token or not self.user_id:
+            self.print_test_result("Create API Key", False, "Not logged in")
+            return
+            
+        try:
+            # Create API key request
+            api_key_request = {
+                "name": "Test API Key"
+                # The expires_at will use the default (server will set to 1 year)
+            }
+            
+            # Send request to create API key
+            response = requests.post(
+                f"{self.api_gateway_url}/api/v1/keys",
+                headers={"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"},
+                json=api_key_request
+            )
+            
+            print(f"  Response status: {response.status_code}")
+            
+            try:
+                json_response = response.json()
+                print(f"  Response: {json.dumps(json_response, indent=2)}")
+                
+                success = response.status_code == 201 and "key" in json_response
+                if success:
+                    # Store the actual API key value, not just the ID
+                    self.api_key = json_response["key"]
+                    print(f"  Created API key: {self.api_key[:10]}...")
+                
+                self.print_test_result("Create API Key", success)
+            except json.JSONDecodeError:
+                print(f"  Non-JSON response: {response.text}")
+                self.print_test_result("Create API Key", False, "Invalid JSON response")
+        except Exception as e:
+            self.print_test_result("Create API Key", False, str(e))
+
     def print_summary(self):
         """Print test summary"""
         self.print_header("TEST SUMMARY")
@@ -806,11 +971,5 @@ class ServiceTester:
             print(f"\n{Fore.YELLOW}Some tests failed. Please check the logs above.{Style.RESET_ALL}")
 
 if __name__ == "__main__":
-    # Set API secret key for testing if not provided in environment
-    if "API_SECRET_KEY" not in os.environ:
-        os.environ["API_SECRET_KEY"] = "your-api-secret-key-change-me-in-production"
-        
-    print(f"{Fore.YELLOW}Using API Gateway auth key: {os.environ['API_SECRET_KEY']}{Style.RESET_ALL}")
-    
     tester = ServiceTester()
     tester.run_all_tests() 

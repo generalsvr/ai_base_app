@@ -61,15 +61,14 @@ func main() {
 	sqlDB.SetMaxOpenConns(100)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
-	// Clean database approach - drop tables if exist and recreate
-	// This is safer for development. For production, you'd want a proper migration strategy
-	if err := db.Exec("DROP TABLE IF EXISTS user_preferences, sessions, users CASCADE").Error; err != nil {
-		zapLogger.Error("Failed to drop tables", zap.Error(err))
-		// Continue even if drop fails
+	// More aggressive approach: Drop the schema and recreate it
+	if err := db.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error; err != nil {
+		zapLogger.Error("Failed to reset database schema", zap.Error(err))
+		// Continue even if this fails
 	}
 
-	// Auto migrate the schema
-	if err := db.AutoMigrate(&models.User{}, &models.Session{}, &models.UserPreference{}, &models.APIKey{}); err != nil {
+	// Auto migrate the schema in the correct order
+	if err := db.AutoMigrate(&models.User{}, &models.Role{}, &models.UserRole{}, &models.Session{}, &models.UserPreference{}, &models.APIKey{}); err != nil {
 		zapLogger.Fatal("Failed to migrate database", zap.Error(err))
 	}
 	zapLogger.Info("Database migrated successfully")
@@ -82,6 +81,7 @@ func main() {
 	userHandler := handlers.NewUserHandler(userRepo, zapLogger)
 	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, zapLogger)
 	authHandler := handlers.NewAuthHandler(apiKeyRepo, userRepo)
+	roleHandler := handlers.NewRoleHandler(userRepo, zapLogger)
 
 	// Create router
 	router := mux.NewRouter()
@@ -90,6 +90,7 @@ func main() {
 	userHandler.RegisterRoutes(router)
 	apiKeyHandler.RegisterRoutes(router, userRepo)
 	authHandler.RegisterRoutes(router)
+	roleHandler.RegisterRoutes(router)
 
 	// Add health check endpoint
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

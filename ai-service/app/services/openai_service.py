@@ -47,8 +47,12 @@ class OpenAIService:
                 stop=stop
             )
             
-            return {
+            # Log raw response format for debugging
+            logger.debug(f"OpenAI API raw completion response: {completion}")
+            
+            response = {
                 "id": completion.id,
+                "object": "text_completion",
                 "choices": [{
                     "text": choice.text,
                     "index": choice.index,
@@ -56,8 +60,18 @@ class OpenAIService:
                     "finish_reason": choice.finish_reason
                 } for choice in completion.choices],
                 "created": completion.created,
-                "model": completion.model
+                "model": completion.model,
+                "usage": {
+                    "prompt_tokens": completion.usage.prompt_tokens if hasattr(completion, 'usage') and completion.usage else 0,
+                    "completion_tokens": completion.usage.completion_tokens if hasattr(completion, 'usage') and completion.usage else 0,
+                    "total_tokens": completion.usage.total_tokens if hasattr(completion, 'usage') and completion.usage else 0
+                }
             }
+            
+            # Log transformed response
+            logger.debug(f"Transformed completion response: {response}")
+            
+            return response
             
         except Exception as e:
             logger.error(f"Error creating completion: {e}")
@@ -86,9 +100,16 @@ class OpenAIService:
                 stream=True
             )
             
+            # Log first chunk for debugging
+            first_chunk = True
+            
             async for chunk in stream:
-                yield {
+                if first_chunk:
+                    logger.debug(f"OpenAI API raw stream chunk: {chunk}")
+                
+                response = {
                     "id": chunk.id,
+                    "object": "text_completion",
                     "choices": [{
                         "text": choice.text,
                         "index": choice.index,
@@ -96,8 +117,19 @@ class OpenAIService:
                         "finish_reason": choice.finish_reason
                     } for choice in chunk.choices],
                     "created": chunk.created,
-                    "model": chunk.model
+                    "model": chunk.model,
+                    "usage": {
+                        "prompt_tokens": 0,  # Not available in stream chunks
+                        "completion_tokens": 0,
+                        "total_tokens": 0
+                    }
                 }
+                
+                if first_chunk:
+                    logger.debug(f"Transformed stream chunk: {response}")
+                    first_chunk = False
+                
+                yield response
             
         except Exception as e:
             logger.error(f"Error creating streaming completion: {e}")
@@ -158,7 +190,7 @@ class OpenAIService:
                 
                 image_url = f"data:image/jpeg;base64,{b64_image}"
             
-            # Create the API request
+            # Create the API request using the correct format for vision API
             response = await self.client.responses.create(
                 model=model,
                 input=[
@@ -172,11 +204,22 @@ class OpenAIService:
                 ]
             )
             
+            # Log raw response for debugging
+            logger.debug(f"OpenAI Vision API raw response: {response}")
+            
             # Extract output text from the response
             result = {
+                "data": {
+                    "text": response.output_text if hasattr(response, 'output_text') else "",
+                },
                 "model": model,
-                "text": response.output_text,
-                "finish_reason": None  # Not provided in this API
+                "provider": "openai",
+                "finish_reason": None,  # Not provided in this API
+                "usage": {
+                    "prompt_tokens": 0,  # Not available in this API
+                    "completion_tokens": 0,  # Not available in this API
+                    "total_tokens": 0  # Not available in this API
+                }
             }
             
             logger.info(f"Successfully processed image with model {model}")

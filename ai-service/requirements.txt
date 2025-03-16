@@ -11,3 +11,4 @@ httpx==0.28.1  # For testing
 groq==0.19.0 # Added for Groq LLM provider 
 zyphra==0.1.4  # Added for Zyphra TTS provider 
 aiohttp==3.9.5  # Added for analytics service integration
+replicate==1.0.4  # Added for Replicate image generation

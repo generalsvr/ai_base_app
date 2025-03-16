@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # Zyphra API settings
     ZYPHRA_API_KEY: str = os.getenv("ZYPHRA_API_KEY", "")
     
+    # Replicate API settings
+    REPLICATE_API_TOKEN: str = os.getenv("REPLICATE_API_TOKEN", "")
+    
     # Application settings
     DEFAULT_EMBEDDING_MODEL: str = "text-embedding-ada-002"
     DEFAULT_COMPLETION_MODEL: str = "gpt-3.5-turbo-instruct"
@@ -30,6 +33,9 @@ class Settings(BaseSettings):
     # Zyphra specific models
     DEFAULT_ZYPHRA_MODEL: str = "zonos-v0.1-transformer"
     DEFAULT_ZYPHRA_MIME_TYPE: str = "audio/webm"  # Default audio format
+    
+    # Replicate specific models
+    DEFAULT_REPLICATE_IMAGE_MODEL: str = "black-forest-labs/flux-schnell"
     
     # API settings
     API_PREFIX: str = "/api/v1"
