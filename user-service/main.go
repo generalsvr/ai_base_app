@@ -69,22 +69,27 @@ func main() {
 	}
 
 	// Auto migrate the schema
-	if err := db.AutoMigrate(&models.User{}, &models.Session{}, &models.UserPreference{}); err != nil {
+	if err := db.AutoMigrate(&models.User{}, &models.Session{}, &models.UserPreference{}, &models.APIKey{}); err != nil {
 		zapLogger.Fatal("Failed to migrate database", zap.Error(err))
 	}
 	zapLogger.Info("Database migrated successfully")
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
+	apiKeyRepo := repository.NewAPIKeyRepository(db)
 
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userRepo, zapLogger)
+	apiKeyHandler := handlers.NewAPIKeyHandler(apiKeyRepo, zapLogger)
+	authHandler := handlers.NewAuthHandler(apiKeyRepo, userRepo)
 
 	// Create router
 	router := mux.NewRouter()
 
 	// Register routes
 	userHandler.RegisterRoutes(router)
+	apiKeyHandler.RegisterRoutes(router, userRepo)
+	authHandler.RegisterRoutes(router)
 
 	// Add health check endpoint
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {

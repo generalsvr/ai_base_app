@@ -555,7 +555,7 @@ class ServiceTester:
         try:
             payload = {
                 "user_id": "test-user-123",
-                "model_used": "gpt-4",
+                "model_used": "gpt-4o-mini",
                 "call_type": "completion",
                 "response_time": 0.75,
                 "tokens": 320,

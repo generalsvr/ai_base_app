@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -44,7 +46,7 @@ func loadConfig() (*Config, error) {
 	return config, nil
 }
 
-// authMiddleware authenticates API requests using a Bearer token
+// authMiddleware authenticates API requests using either Bearer token or API key
 func authMiddleware(secretKey string, userServiceURL string, logger *zap.Logger) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -60,7 +62,24 @@ func authMiddleware(secretKey string, userServiceURL string, logger *zap.Logger)
 				return
 			}
 
-			// Check Bearer token format
+			// First, check for API key in X-API-Key header
+			apiKey := r.Header.Get("X-API-Key")
+			if apiKey != "" {
+				// Validate the API key with the user service
+				valid, userData := validateAPIKey(apiKey, userServiceURL, logger)
+				if valid {
+					// Add user info to request context for downstream services
+					ctx := context.WithValue(r.Context(), "user", userData)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+
+				logger.Warn("Invalid API key")
+				http.Error(w, "Unauthorized: Invalid API key", http.StatusUnauthorized)
+				return
+			}
+
+			// If no API key, check Bearer token format
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
 				logger.Warn("Missing or invalid Authorization header")
@@ -114,6 +133,56 @@ func authMiddleware(secretKey string, userServiceURL string, logger *zap.Logger)
 	}
 }
 
+// validateAPIKey validates an API key with the user service
+func validateAPIKey(apiKey string, userServiceURL string, logger *zap.Logger) (bool, map[string]interface{}) {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	// Create the request body
+	reqBody, err := json.Marshal(map[string]string{
+		"api_key": apiKey,
+	})
+	if err != nil {
+		logger.Error("Failed to marshal API key validation request", zap.Error(err))
+		return false, nil
+	}
+
+	// Create the request
+	req, err := http.NewRequest("POST", userServiceURL+"/api/auth/validate-key", bytes.NewBuffer(reqBody))
+	if err != nil {
+		logger.Error("Failed to create API key validation request", zap.Error(err))
+		return false, nil
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.Error("Failed to validate API key with user service", zap.Error(err))
+		return false, nil
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("API key validation failed", zap.Int("status", resp.StatusCode))
+		return false, nil
+	}
+
+	// Parse response
+	var validationResponse struct {
+		Valid bool                   `json:"valid"`
+		User  map[string]interface{} `json:"user"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&validationResponse); err != nil {
+		logger.Error("Failed to decode API key validation response", zap.Error(err))
+		return false, nil
+	}
+
+	return validationResponse.Valid, validationResponse.User
+}
+
 func main() {
 	// Configure logger
 	logger, err := zap.NewProduction()
@@ -146,6 +215,7 @@ func main() {
 	api.PathPrefix("/login").Handler(createProxyHandler(config.UserServiceURL, logger))
 	api.PathPrefix("/logout").Handler(createProxyHandler(config.UserServiceURL, logger))
 	api.PathPrefix("/verify-token").Handler(createProxyHandler(config.UserServiceURL, logger))
+	api.PathPrefix("/keys").Handler(createProxyHandler(config.UserServiceURL, logger))
 
 	// AI service routes
 	api.PathPrefix("/completions").Handler(createProxyHandler(config.AIServiceURL, logger))
@@ -222,6 +292,19 @@ func createProxyHandler(targetURL string, logger *zap.Logger) http.HandlerFunc {
 		for name, values := range r.Header {
 			for _, value := range values {
 				req.Header.Add(name, value)
+			}
+		}
+
+		// If we have a user in the context (from API key auth), add user info to the request headers
+		if userData, ok := r.Context().Value("user").(map[string]interface{}); ok {
+			// Add user ID header for backend services
+			if userID, ok := userData["id"]; ok {
+				req.Header.Set("X-User-ID", fmt.Sprintf("%v", userID))
+			}
+
+			// Add username header for backend services
+			if username, ok := userData["username"]; ok {
+				req.Header.Set("X-Username", fmt.Sprintf("%v", username))
 			}
 		}
 

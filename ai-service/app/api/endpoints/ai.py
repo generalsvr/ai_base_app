@@ -2,7 +2,7 @@ import logging
 import json
 import time
 from typing import List, Optional, Callable, Any, Union, Dict
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Body, Query, Request as FastAPIRequest
+from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form, Body, Query, Request as FastAPIRequest, Depends
 from fastapi.responses import StreamingResponse, Response
 import base64
 import functools
@@ -23,6 +23,7 @@ from app.services.groq_service import GroqService
 from app.services.zyphra_service import ZyphraService
 from app.services.qdrant_service import QdrantService
 from app.services.analytics_service import AnalyticsService
+from app.middleware.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ def handle_exceptions(operation_name: str):
 
 @router.post("/completions", response_model=CompletionResponse)
 @handle_exceptions("creating completion")
-async def create_completion(request: CompletionRequest):
+async def create_completion(request: CompletionRequest, user: Dict = Depends(get_current_user)):
     """Create a text completion"""
     ai_service = get_ai_service(
         provider=request.provider,
@@ -147,7 +148,7 @@ async def create_completion_stream(request: CompletionRequest):
 
 @router.post("/embeddings", response_model=EmbeddingDB, status_code=status.HTTP_201_CREATED)
 @handle_exceptions("creating embedding")
-async def create_embedding(request: EmbeddingRequest):
+async def create_embedding(request: EmbeddingRequest, user: Dict = Depends(get_current_user)):
     """Create and store an embedding"""
     # Track start time for response time measurement
     start_time = time.time()
@@ -229,7 +230,7 @@ async def delete_embedding(embedding_id: int):
 
 @router.post("/similarity", response_model=SimilarityResponse)
 @handle_exceptions("finding similar texts")
-async def find_similar(request: SimilarityRequest):
+async def find_similar(request: SimilarityRequest, user: Dict = Depends(get_current_user)):
     """Find similar texts based on vector similarity"""
     # Track start time for response time measurement
     start_time = time.time()
@@ -292,17 +293,7 @@ async def find_similar(request: SimilarityRequest):
 
 @router.post("/images", response_model=ImageResponse)
 @handle_exceptions("processing image")
-async def process_image(
-    request: FastAPIRequest,
-    prompt: Optional[str] = Form(None),
-    image_url: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-    model: Optional[str] = Form(None),
-    api_key: Optional[str] = Form(None),
-    base_url: Optional[str] = Form(None),
-    provider: Optional[str] = Form(Provider.OPENAI),
-    user_id: Optional[str] = Form(None)
-):
+async def process_image(request: ImageProcessingRequest, user: Dict = Depends(get_current_user)):
     """
     Process an image from various sources (URL, base64, or file upload).
     This consolidated endpoint supports both JSON body and form data.
@@ -329,42 +320,42 @@ async def process_image(
                 body_json = json.loads(body_bytes)
                 logger.info(f"Request body JSON keys: {list(body_json.keys())}")
                 
-                if 'user_id' in body_json and user_id is None:
-                    user_id = body_json.get('user_id')
+                if 'user_id' in body_json and request.user_id is None:
+                    request.user_id = body_json.get('user_id')
             except Exception as e:
                 logger.error(f"Error parsing request body as JSON: {e}")
         
         # Process form data or JSON based on what's received
-        if file is not None or prompt is not None or image_url is not None:
+        if request.file is not None or request.prompt is not None or request.image_url is not None:
             # Form data
-            if not prompt:
+            if not request.prompt:
                 raise HTTPException(status_code=400, detail="Prompt is required for form data")
             
-            actual_prompt = prompt
+            actual_prompt = request.prompt
             
-            if not file and not image_url:
+            if not request.file and not request.image_url:
                 raise HTTPException(status_code=400, detail="Either file or image_url must be provided")
                 
             # OpenAI is currently the only supported provider
-            if provider != Provider.OPENAI:
-                logger.warning(f"Provider {provider} doesn't support image processing. Using OpenAI")
+            if request.provider != Provider.OPENAI:
+                logger.warning(f"Provider {request.provider} doesn't support image processing. Using OpenAI")
                 
-            openai_service = OpenAIService(api_key=api_key, base_url=base_url)
+            openai_service = OpenAIService(api_key=request.api_key, base_url=request.base_url)
             
-            if file:
+            if request.file:
                 # Process file upload
-                image_bytes = await file.read()
+                image_bytes = await request.file.read()
                 result = await openai_service.process_image_from_bytes(
-                    prompt=prompt,
+                    prompt=request.prompt,
                     image_bytes=image_bytes,
-                    model=model
+                    model=request.model
                 )
             else:
                 # Process URL
                 result = await openai_service.process_image_from_url(
-                    prompt=prompt,
-                    image_url=image_url,
-                    model=model
+                    prompt=request.prompt,
+                    image_url=request.image_url,
+                    model=request.model
                 )
         else:
             # JSON data - read the raw request body
@@ -392,16 +383,15 @@ async def process_image(
                 raise HTTPException(status_code=400, detail="Prompt is required")
             
             # Get values from request
-            prompt = req_obj.prompt
-            actual_prompt = prompt
+            actual_prompt = req_obj.prompt
             model = req_obj.model
             api_key = req_obj.api_key
             base_url = req_obj.base_url
             provider = req_obj.provider
             
             # Get user_id if present
-            if hasattr(req_obj, 'user_id') and req_obj.user_id and not user_id:
-                user_id = req_obj.user_id
+            if hasattr(req_obj, 'user_id') and req_obj.user_id and request.user_id is None:
+                request.user_id = req_obj.user_id
             
             # OpenAI is the only supported provider
             if provider != Provider.OPENAI:
@@ -412,7 +402,7 @@ async def process_image(
             if req_obj.image_url:
                 # Process URL
                 result = await openai_service.process_image_from_url(
-                    prompt=prompt,
+                    prompt=req_obj.prompt,
                     image_url=req_obj.image_url,
                     model=model
                 )
@@ -421,7 +411,7 @@ async def process_image(
                 try:
                     image_bytes = base64.b64decode(req_obj.image_base64)
                     result = await openai_service.process_image_from_bytes(
-                        prompt=prompt,
+                        prompt=req_obj.prompt,
                         image_bytes=image_bytes,
                         model=model
                     )
@@ -452,7 +442,7 @@ async def process_image(
         if actual_prompt:
             await log_image_processing(
                 prompt=actual_prompt,
-                user_id=user_id,
+                user_id=request.user_id,
                 model=model,
                 success=success,
                 response_time=response_time,
@@ -527,9 +517,9 @@ async def transcribe_audio(file: UploadFile = File(...),
         )
 
 
-@router.post("/tts/synthesize")
+@router.post("/tts/synthesize", response_class=StreamingResponse)
 @handle_exceptions("synthesizing speech")
-async def synthesize_speech(request: TTSRequest):
+async def text_to_speech(request: TTSRequest, user: Dict = Depends(get_current_user)):
     """Convert text to speech using TTS provider"""
     # Track start time for response time measurement
     start_time = time.time()
@@ -567,8 +557,8 @@ async def synthesize_speech(request: TTSRequest):
         content_type = request.mime_type or "audio/webm"
         
         # Return the audio data
-        return Response(
-            content=audio_data,
+        return StreamingResponse(
+            audio_data,
             media_type=content_type
         )
     except Exception as e:
@@ -634,8 +624,8 @@ async def synthesize_speech_with_cloned_voice(request: TTSCloneVoiceRequest):
         content_type = request.mime_type or "audio/webm"
         
         # Return the audio data
-        return Response(
-            content=audio_data,
+        return StreamingResponse(
+            audio_data,
             media_type=content_type
         )
     except Exception as e:
@@ -661,25 +651,22 @@ async def synthesize_speech_with_cloned_voice(request: TTSCloneVoiceRequest):
         )
 
 
-@router.post("/tts/emotion")
-@handle_exceptions("synthesizing speech with emotion")
-async def synthesize_speech_with_emotion(
+@router.post("/tts/emotion", response_class=StreamingResponse)
+@handle_exceptions("synthesizing emotional speech")
+async def text_to_speech_emotion(
     text: str = Form(...),
-    happiness: float = Form(0.6),
-    neutral: float = Form(0.6),
-    sadness: float = Form(0.05),
-    disgust: float = Form(0.05),
-    fear: float = Form(0.05),
-    surprise: float = Form(0.05),
-    anger: float = Form(0.05),
-    other: float = Form(0.5),
-    model: Optional[str] = Form(None),
-    speaking_rate: float = Form(15.0),
-    language_iso_code: Optional[str] = Form(None),
-    mime_type: Optional[str] = Form(None),
-    api_key: Optional[str] = Form(None),
-    provider: str = Form(Provider.ZYPHRA),
-    user_id: Optional[str] = Form(None)
+    happiness: float = Form(0.0),
+    sadness: float = Form(0.0),
+    anger: float = Form(0.0),
+    fear: float = Form(0.0),
+    surprise: float = Form(0.0),
+    disgust: float = Form(0.0),
+    neutral: float = Form(1.0),
+    other: float = Form(0.0),
+    speaking_rate: float = Form(1.0),
+    user_id: str = Form("anonymous"),
+    mime_type: TTSSupportedFormat = Form(TTSSupportedFormat.WEBM),
+    user: Dict = Depends(get_current_user)
 ):
     """Convert text to speech with emotion control"""
     # Track start time for response time measurement
@@ -725,8 +712,8 @@ async def synthesize_speech_with_emotion(
         content_type = mime_type or "audio/webm"
         
         # Return the audio data
-        return Response(
-            content=audio_data,
+        return StreamingResponse(
+            audio_data,
             media_type=content_type
         )
     except Exception as e:
